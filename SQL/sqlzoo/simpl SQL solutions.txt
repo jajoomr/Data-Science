@@ -1,0 +1,134 @@
+Assumptions:
+
+1) transaction_id is the primary_key
+2) Data type of transaction_date is TimeStamp
+
+
+
+Solutions:
+Q1: a. Write a query to find the first merchant a user transacts on
+
+Solution:
+WITH purchase_order_info as
+(
+	SELECT user_id,
+	merchant_name,
+	RANK() OVER (PARTITION BY user_id ORDER BY transaction_date) as order_of_purchase
+	FROM transactions
+)
+SELECT user_id, merchant_name
+FROM purchase_order_info
+WHERE order_of_purchase = 1
+
+
+Q1: b. Extract count of users who transacted for the first time on a Monday for each merchant
+
+Solution:
+
+WITH purchase_order_info as
+(
+	SELECT user_id,
+	merchant_name,
+	RANK() OVER (PARTITION BY user_id ORDER BY transaction_date) as order_of_purchase,
+	EXTRACT(dow FROM transaction_date) as day_of_purchase,
+	to_char(transaction_date, 'Day') as dow
+	FROM transactions
+)
+SELECT COUNT(user_id)
+FROM purchase_order_info
+WHERE order_of_purchase = 1 AND day_of_purchase = 1
+
+
+Q2: Write a query to extract alternate rows ordered by date for each user.
+
+Solution:
+
+WITH transaction_order as
+(
+	SELECT ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY transaction_date) as order_number,
+			*
+	FROM transactions
+)
+SELECT *
+FROM transaction_order
+WHERE order_number % 2 = 1
+
+
+Q3: Write a query to extract top 25% of users based on amount spent.
+
+Solution:
+
+WITH amount_per_user as
+(
+	SELECT user_id, SUM(amount) as total_amount
+	FROM transactions
+	GROUP BY user_id
+),
+transaction_quartile as
+(
+	SELECT *,
+		NTILE(4) OVER (ORDER by total_amount DESC) as quartile
+	FROM amount_per_user
+)
+SELECT *
+FROM transaction_quartile
+WHERE quartile = 1
+
+
+Q4: Write a query to calculate time difference (in days) between current and previous order of each customer for every row and the avg time difference between two orders for every customer.
+
+Solution:
+
+WITH transaction_dates as
+(
+	SELECT user_id, DATE(transaction_date) as t_date,
+		DATE(LEAD(transaction_date) OVER (PARTITION BY user_id ORDER BY transaction_date)) as next_date	
+	FROM transactions
+)
+SELECT user_id,
+	(next_date - t_date) as day_diff,
+	ROUND(AVG(next_date - t_date) OVER (PARTITION BY user_id), 2) as avg_day_diff
+FROM transaction_dates
+
+
+
+Q5: Write a query to get count of users who transact in 3 continuous months.
+
+Solution:
+
+WITH transaction_dates as
+(
+	SELECT user_id, transaction_date,
+		LEAD(transaction_date) OVER (PARTITION BY user_id ORDER BY transaction_date) as next_date	
+	FROM transactions
+),
+transaction_date_parts as
+(
+	SELECT *,
+		EXTRACT(month FROM transaction_date) as current_month,
+		EXTRACT(year FROM transaction_date) as current_year,
+		EXTRACT(month FROM next_date) as next_month,
+		EXTRACT(year FROM next_date) as next_year
+	FROM transaction_dates
+),
+month_difference as
+(
+	SELECT transaction_id, user_id, transaction_date, next_date,
+		(next_year*12 + next_month) - (current_year*12 + current_month) as month_diff
+	FROM transaction_date_parts
+),
+continuos_monthly_transaction as
+(
+	SELECT *
+	FROM month_difference
+	WHERE month_diff = 1
+),
+continuous_transact_count as
+(
+	SELECT *,
+		SUM(month_diff) OVER (PARTITION BY user_id) as consecutive_month_count
+	FROM continuos_monthly_transaction
+)
+SELECT count(DISTINCT user_id)
+FROM continuous_transact_count
+WHERE consecutive_month_count >=3
